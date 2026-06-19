@@ -20,6 +20,7 @@ func main() {
 
 	// Public routes
 	r.POST("/api/auth/login", handlers.Login)
+	r.POST("/api/auth/register", handlers.Register)
 
 	// Protected routes
 	auth := r.Group("/api")
