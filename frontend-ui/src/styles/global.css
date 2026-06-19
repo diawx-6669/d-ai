@@ -1,0 +1,92 @@
+/* ── d-ai Global Styles ── Dark Cyberpunk Core ── */
+:root {
+  --bg-base:      #09090b;
+  --bg-surface:   #121214;
+  --bg-card:      #18181c;
+  --bg-input:     #1e1e24;
+  --border:       #2a2a32;
+  --border-focus: #ff3344;
+
+  --red:          #ff3344;
+  --red-glow:     rgba(255, 51, 68, 0.35);
+  --red-dim:      rgba(255, 51, 68, 0.12);
+
+  --text-primary:   #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-muted:     #52525b;
+
+  --font-sans:  "Space Grotesk", system-ui, sans-serif;
+  --font-mono:  "JetBrains Mono", monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --transition: 180ms ease;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--red-glow); color: #fff; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--red); }
+
+/* Inputs */
+input, textarea {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+input:focus, textarea:focus {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px var(--red-glow);
+}
+
+/* Buttons */
+button { cursor: pointer; font-family: var(--font-sans); border: none; }
+
+.btn-red {
+  background: var(--red);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-sm);
+  padding: 0.65rem 1.4rem;
+  transition: opacity var(--transition), box-shadow var(--transition);
+}
+.btn-red:hover { opacity: 0.88; box-shadow: 0 0 20px var(--red-glow); }
+.btn-red:active { opacity: 0.76; }
+
+/* Pulsing dot */
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 0 var(--red-glow); }
+  50%       { box-shadow: 0 0 0 6px transparent; }
+}
+.pulse-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--red);
+  animation: pulse-dot 1.6s infinite;
+}
+
+/* Severity badges */
+.badge { display: inline-block; border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.badge-critical { background: rgba(255,51,68,0.18); color: #ff3344; border: 1px solid rgba(255,51,68,0.35); }
+.badge-warning  { background: rgba(250,173,20,0.15); color: #faad14; border: 1px solid rgba(250,173,20,0.3); }
+.badge-info     { background: rgba(96,165,250,0.12); color: #60a5fa; border: 1px solid rgba(96,165,250,0.25); }

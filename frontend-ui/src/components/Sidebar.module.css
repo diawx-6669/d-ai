@@ -1,0 +1,81 @@
+.sidebar {
+  width: 240px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transition: width 260ms ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed { width: 56px; }
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 14px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.logoIcon { font-size: 22px; flex-shrink: 0; }
+.logoText  { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-primary); white-space: nowrap; }
+
+.historyLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 14px 16px 6px;
+}
+
+.historyList {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+}
+
+.empty { font-size: 12px; color: var(--text-muted); padding: 8px; }
+
+.historyItem {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  cursor: pointer;
+  transition: background var(--transition);
+  text-align: left;
+}
+.historyItem:hover { background: var(--bg-card); }
+
+.historyUrl {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+.historyTs { font-size: 10px; color: var(--text-muted); }
+
+.toggleBtn {
+  margin: auto 0 0;
+  padding: 12px 16px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  transition: color var(--transition);
+}
+.toggleBtn:hover { color: var(--red); }

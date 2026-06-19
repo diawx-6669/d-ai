@@ -1,0 +1,33 @@
+version: "3.9"
+services:
+  core-backend:
+    build: ./core-backend
+    ports: ["8080:8080"]
+    env_file: .env
+    depends_on: [postgres]
+
+  crawler-engine:
+    build: ./crawler-engine
+    ports: ["5001:5001"]
+    env_file: .env
+
+  ai-assistant:
+    build: ./ai-assistant
+    ports: ["5002:5002"]
+    env_file: .env
+
+  frontend-ui:
+    build: ./frontend-ui
+    ports: ["3000:3000"]
+    env_file: .env
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dai
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+volumes:
+  pgdata:
