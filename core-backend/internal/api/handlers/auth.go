@@ -3,12 +3,19 @@ package handlers
 import (
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/d-ai/core-backend/internal/db"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+)
+
+// Fallback in-memory user store for local/testing when db.DB is nil.
+var (
+	localUsers = map[string]string{} // username -> bcrypt hash
+	usersMu    sync.Mutex
 )
 
 type loginBody struct {
@@ -29,14 +36,23 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// Fetch the stored password hash from the DB.
-	// Adjust the query to match your actual table/column names.
+	// Fetch the stored password hash from the DB or local store.
 	var hashedPassword string
-	row := db.DB.QueryRow("SELECT password_hash FROM users WHERE username = $1", body.Username)
-	if err := row.Scan(&hashedPassword); err != nil {
-		// User not found — return same error as wrong password to avoid enumeration
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-		return
+	if db.DB != nil {
+		row := db.DB.QueryRow("SELECT password_hash FROM users WHERE username = $1", body.Username)
+		if err := row.Scan(&hashedPassword); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			return
+		}
+	} else {
+		usersMu.Lock()
+		hp, ok := localUsers[body.Username]
+		usersMu.Unlock()
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+			return
+		}
+		hashedPassword = hp
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(body.Password)); err != nil {
@@ -62,15 +78,25 @@ func Register(c *gin.Context) {
 	}
 
 	// Check that the username is not already taken.
-	var exists bool
-	row := db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", body.Username)
-	if err := row.Scan(&exists); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-		return
-	}
-	if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "username already taken"})
-		return
+	if db.DB != nil {
+		var exists bool
+		row := db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", body.Username)
+		if err := row.Scan(&exists); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+			return
+		}
+		if exists {
+			c.JSON(http.StatusConflict, gin.H{"error": "username already taken"})
+			return
+		}
+	} else {
+		usersMu.Lock()
+		_, exists := localUsers[body.Username]
+		usersMu.Unlock()
+		if exists {
+			c.JSON(http.StatusConflict, gin.H{"error": "username already taken"})
+			return
+		}
 	}
 
 	// Hash password with bcrypt (cost 12 is a reasonable default).
@@ -80,14 +106,20 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// Insert the new user.
-	_, err = db.DB.Exec(
-		"INSERT INTO users (username, password_hash, created_at) VALUES ($1, $2, NOW())",
-		body.Username, string(hash),
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create user"})
-		return
+	// Insert the new user into DB or local store.
+	if db.DB != nil {
+		_, err = db.DB.Exec(
+			"INSERT INTO users (username, password_hash, created_at) VALUES ($1, $2, NOW())",
+			body.Username, string(hash),
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create user"})
+			return
+		}
+	} else {
+		usersMu.Lock()
+		localUsers[body.Username] = string(hash)
+		usersMu.Unlock()
 	}
 
 	token, err := signToken(body.Username)

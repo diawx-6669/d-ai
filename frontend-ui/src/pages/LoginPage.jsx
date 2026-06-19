@@ -52,6 +52,9 @@ export default function LoginPage() {
             {loading ? "Authenticating…" : "ВОЙТИ"}
           </button>
         </form>
+        <p style={{ marginTop: "1rem", fontSize: "0.85rem", textAlign: "center" }}>
+          Нет аккаунта? <a href="/register" style={{ color: "inherit", textDecoration: "underline" }}>Зарегистрироваться</a>
+        </p>
       </div>
     </div>
   );
