@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>🛡️ d-ai — AI Website Audit Ecosystem</h1>
+  <h1>d-ai — AI Website Audit Ecosystem</h1>
   <p>Full-stack, AI-powered website auditor with real-time chat assistant.</p>
 
   ![Go](https://img.shields.io/badge/Go-1.22-00ADD8?style=flat-square&logo=go)
