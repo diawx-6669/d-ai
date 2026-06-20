@@ -1,0 +1,24 @@
+server {
+    listen ${PORT};
+
+    # Проксируем API на Go-сервер внутри контейнера.
+    # ВАЖНО: это ВНУТРЕННИЙ фиксированный порт (8080), а не тот $PORT, который
+    # Render выдаёт снаружи. Go-сервер и Nginx не должны слушать один и тот же
+    # порт -- два процесса физически не могут забиндиться на один и тот же
+    # порт одновременно. Render проверяет только порт, который слушает Nginx
+    # (он указан в $PORT), поэтому именно Nginx должен быть на $PORT, а Go --
+    # на любом стабильном внутреннем порту, который знает только Nginx.
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Отдаем фронтенд
+    location / {
+        root /usr/share/nginx/html;
+        try_files $uri $uri/ /index.html;
+    }
+}
