@@ -19,17 +19,16 @@ func main() {
 	r.Use(middleware.CORS())
 	r.Use(middleware.RequestLogger(log))
 
-	// Initialize DB from environment (DATABASE_URL). If initialization fails
-	// we log a warning and continue — handlers have an in-memory fallback.
+	// Initialize DB from environment (DATABASE_URL). Fail fast if DB cannot be
+	// initialized or migrations cannot be applied. This ensures the service does
+	// not run in a degraded in-memory mode in production.
 	if err := db.InitFromConnString(os.Getenv("DATABASE_URL")); err != nil {
-		log.Warn().Err(err).Msg("could not initialize DB; continuing with in-memory store")
-	} else {
-		if err := db.Migrate(); err != nil {
-			log.Error().Err(err).Msg("db migration failed")
-		} else {
-			log.Info().Msg("db migration applied")
-		}
+		log.Fatal().Err(err).Msg("could not initialize DB")
 	}
+	if err := db.Migrate(); err != nil {
+		log.Fatal().Err(err).Msg("db migration failed")
+	}
+	log.Info().Msg("db migration applied")
 
 	// Public routes
 	r.POST("/api/auth/login", handlers.Login)
@@ -44,6 +43,19 @@ func main() {
 		auth.GET("/history", handlers.GetHistory)
 		auth.GET("/ws", handlers.WebSocketHandler)
 	}
+
+	// Health endpoint for readiness checks
+	r.GET("/health", func(c *gin.Context) {
+		if db.DB == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "db not initialized"})
+			return
+		}
+		if err := db.DB.Ping(); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "db ping failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
