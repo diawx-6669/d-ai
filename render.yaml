@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: d-ai
+    env: docker
+    repo: https://github.com/diawx-6669/d-ai.git
+    branch: render-deploy
+    plan: free
+    buildCommand: ""
+    startCommand: ""
+    envVars:
+      - key: GIN_MODE
+        value: release
+      - key: PORT
+        value: "10000"
+
+databases:
+  - name: d-ai-db
+    plan: starter
