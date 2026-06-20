@@ -26,5 +26,5 @@ COPY --from=frontend-build /app/dist /usr/share/nginx/html
 # Добавляем пользовательский конфиг Nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 10000
+EXPOSE 80
 CMD ["sh", "-c", "/usr/local/bin/server & nginx -g 'daemon off;'"]
