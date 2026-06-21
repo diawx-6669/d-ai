@@ -78,3 +78,22 @@ func GetAudit(c *gin.Context) {
 		"report":     report,
 	})
 }
+
+// StartAudit enqueues a new website audit job.
+func StartAudit(c *gin.Context) {
+	var req struct {
+		URL string `json:"url" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	// TODO: push to worker queue
+	c.JSON(http.StatusAccepted, gin.H{"status": "queued", "url": req.URL})
+}
+
+// GetHistory returns the authenticated user's past audits.
+func GetHistory(c *gin.Context) {
+	// TODO: fetch from repository scoped to userID from JWT
+	c.JSON(http.StatusOK, gin.H{"history": []interface{}{}})
+}
