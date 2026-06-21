@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/d-ai/core-backend/internal/db"
-	"github.com/d-ai/core-backend/pkg/models"
+	"github.com/d-ai/core-backend/internal/models"
 	"github.com/gin-gonic/gin"
 	"github.com/lib/pq"
 )
