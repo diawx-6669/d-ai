@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -19,11 +20,18 @@ var aiBase = func() string {
 	return "http://localhost:5002"
 }()
 
-// ChatProxy проксирует SSE-поток от Python AI-сервиса с таймаутом 25с.
+// ChatProxy проксирует SSE-поток от Python AI-сервиса с таймаутом 25 с.
+//
+// Маршрут: POST /api/chat (зарегистрирован в main.go как handlers.ChatProxy).
+//
+// Поведение при ошибках:
+//   - таймаут (25 с)  → SSE-событие с JSON-ошибкой + [DONE]
+//   - клиент закрыл  → тихий выход
+//   - плохой gateway → JSON 502
+//   - прочее         → JSON 500
 func ChatProxy(c *gin.Context) {
 	// Объединяем таймаут прокси с контекстом клиентского запроса:
-	// если клиент закрыл соединение — контекст отменяется немедленно,
-	// не ждём 25 секунд впустую.
+	// если клиент закрыл соединение — контекст отменяется немедленно.
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiServiceTimeout)
 	defer cancel()
 
@@ -32,29 +40,49 @@ func ChatProxy(c *gin.Context) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, aiBase+"/chat", body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build upstream request"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": fmt.Sprintf("не удалось сформировать запрос к AI-сервису: %v", err),
+		})
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Используем клиент без глобального таймаута — таймаут управляется контекстом
+	// Клиент без глобального таймаута — таймаут управляется контекстом.
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
+			// Отдаём ошибку в формате SSE, чтобы фронтенд мог её распарсить
+			// в потоковом режиме так же, как обычные чанки.
 			c.Header("Content-Type", "text/event-stream")
-			c.String(http.StatusGatewayTimeout,
-				"data: {\"error\":\"AI-сервис не ответил за 25 секунд. Попробуйте позже.\"}\n\ndata: [DONE]\n\n")
+			c.Header("Cache-Control", "no-cache")
+			c.Header("X-Accel-Buffering", "no")
+			c.Status(http.StatusGatewayTimeout)
+			fmt.Fprint(c.Writer, "data: {\"error\":\"AI-сервис не ответил за 25 секунд. Попробуйте позже.\"}\n\n")
+			fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+			c.Writer.Flush()
 		case context.Canceled:
-			// Клиент закрыл соединение до ответа — просто выходим
+			// Клиент закрыл соединение до ответа — просто выходим.
 		default:
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": fmt.Sprintf("AI-сервис недоступен: %v", err),
+			})
 		}
 		return
 	}
 	defer resp.Body.Close()
 
-	// Прокидываем SSE-заголовки клиенту
+	// Если upstream вернул не-2xx — читаем тело и отдаём понятный JSON.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		upstreamBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		c.JSON(http.StatusBadGateway, gin.H{
+			"error":           fmt.Sprintf("AI-сервис вернул статус %d", resp.StatusCode),
+			"upstream_detail": string(upstreamBody),
+		})
+		return
+	}
+
+	// Прокидываем SSE-заголовки клиенту.
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("X-Accel-Buffering", "no")
@@ -62,9 +90,10 @@ func ChatProxy(c *gin.Context) {
 
 	buf := make([]byte, 4096)
 	for {
-		// Проверяем контекст перед каждым чтением
+		// Проверяем контекст перед каждым чтением.
 		if ctx.Err() != nil {
-			_, _ = c.Writer.Write([]byte("data: {\"error\":\"Таймаут соединения\"}\n\ndata: [DONE]\n\n"))
+			fmt.Fprint(c.Writer, "data: {\"error\":\"Таймаут соединения\"}\n\n")
+			fmt.Fprint(c.Writer, "data: [DONE]\n\n")
 			c.Writer.Flush()
 			return
 		}
@@ -80,6 +109,10 @@ func ChatProxy(c *gin.Context) {
 			break
 		}
 		if readErr != nil {
+			// Сеть упала посередине стрима — шлём финальное событие.
+			fmt.Fprintf(c.Writer, "data: {\"error\":\"Соединение с AI-сервисом прервано: %v\"}\n\n", readErr)
+			fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+			c.Writer.Flush()
 			return
 		}
 	}

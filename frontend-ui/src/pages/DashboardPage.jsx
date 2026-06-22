@@ -85,6 +85,22 @@ export default function DashboardPage() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
+    // Индекс сообщения-ответа ассистента — будем дополнять его по мере
+    // прихода SSE-чанков (стриминг), а не ждать весь ответ целиком.
+    let assistantIdx = null;
+
+    const appendChunk = (chunk) => {
+      setChatMessages(m => {
+        if (assistantIdx === null) {
+          assistantIdx = m.length;
+          return [...m, { role: "assistant", text: chunk }];
+        }
+        return m.map((msg, i) =>
+          i === assistantIdx ? { ...msg, text: msg.text + chunk } : msg
+        );
+      });
+    };
+
     try {
       const BASE  = import.meta?.env?.VITE_API_BASE || "";
       const token = localStorage.getItem("dai_token") || "";
@@ -96,18 +112,70 @@ export default function DashboardPage() {
         signal: controller.signal,
       });
 
-      if (!res.ok) throw new Error(`Сервер вернул ${res.status}`);
+      // Нет тела — сразу читаем JSON-ошибку
+      if (!res.ok) {
+        let detail = `Сервер вернул ${res.status}`;
+        try {
+          const json = await res.json();
+          if (json?.error) detail = json.error;
+        } catch (_) { /* ignore */ }
+        throw new Error(detail);
+      }
 
-      const data = await res.json();
-      setChatMessages(m => [...m, { role: "assistant", text: data.reply || data.message || "…" }]);
+      // Бэкенд отдаёт SSE-стрим: читаем построчно через ReadableStream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        // Последняя строка может быть незавершённой — оставляем в буфере
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const raw = line.slice(5).trim();
+          if (raw === "[DONE]") break;
+
+          try {
+            const parsed = JSON.parse(raw);
+            // Ошибка в SSE-потоке (таймаут на Go-стороне и т.п.)
+            if (parsed?.error) {
+              appendChunk(parsed.error);
+              return;
+            }
+            // Стандартный чанк: { delta } или { text } или { reply }
+            const text = parsed?.delta ?? parsed?.text ?? parsed?.reply ?? parsed?.message;
+            if (text) appendChunk(text);
+          } catch (_) {
+            // Нераспарсенный чанк — добавляем как есть
+            if (raw) appendChunk(raw);
+          }
+        }
+      }
+
+      // Если ни одного чанка не пришло — показываем fallback
+      if (assistantIdx === null) {
+        appendChunk("(пустой ответ от AI-сервиса)");
+      }
     } catch (err) {
       const isTimeout = err.name === "AbortError";
-      setChatMessages(m => [...m, {
-        role: "assistant",
-        text: isTimeout
-          ? "⏱ AI-сервис не ответил за 30 секунд. Попробуйте позже."
-          : "Ошибка соединения с AI-сервисом.",
-      }]);
+      const text = isTimeout
+        ? "⏱ AI-сервис не ответил за 30 секунд. Попробуйте позже."
+        : `Ошибка соединения с AI-сервисом: ${err.message}`;
+
+      if (assistantIdx !== null) {
+        // Дописываем ошибку к уже начатому сообщению
+        setChatMessages(m =>
+          m.map((msg, i) => i === assistantIdx ? { ...msg, text: msg.text + `\n\n⚠️ ${text}` } : msg)
+        );
+      } else {
+        appendChunk(text);
+      }
     } finally {
       clearTimeout(timeoutId);
       setChatLoading(false);
@@ -163,75 +231,59 @@ export default function DashboardPage() {
         {/* Collapse button */}
         <button onClick={() => setSidebarOpen(o => !o)} style={{
           margin: "0 8px 12px",
-          padding: "8px",
-          background: "transparent",
+          padding: "7px",
+          background: "var(--bg-card)",
           border: "1px solid var(--border)",
           borderRadius: "var(--radius-sm)",
           color: "var(--text-muted)",
           cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 16,
-          transition: "color var(--transition), border-color var(--transition)",
+          fontSize: 13,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}>
-          {sidebarOpen ? "◀" : "▶"}
+          {sidebarOpen ? "◂" : "▸"}
         </button>
-
-        {sidebarOpen && (
-          <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border)", fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-            © d-ai
-          </div>
-        )}
       </aside>
 
       {/* ── Main ── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Topbar */}
         <header style={{
-          height: 56, flexShrink: 0,
-          background: "var(--bg-surface)",
+          padding: "0 24px",
+          height: 56,
           borderBottom: "1px solid var(--border)",
-          display: "flex", alignItems: "center",
-          padding: "0 20px", gap: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          background: "var(--bg-surface)",
+          flexShrink: 0,
         }}>
           <input
             value={url}
             onChange={e => setUrl(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && !isPolling && url && handleSubmit()}
+            onKeyDown={e => e.key === "Enter" && handleSubmit()}
             placeholder="https://example.com"
-            disabled={isPolling}
-            style={{ flex: 1, padding: "8px 14px", fontSize: 14, maxWidth: 560 }}
+            style={{ flex: 1, maxWidth: 480, padding: "7px 12px", fontSize: 13 }}
           />
           <button
             className="btn-red"
             onClick={handleSubmit}
-            disabled={isPolling || !url}
-            style={{
-              opacity: isPolling || !url ? 0.45 : 1,
-              cursor: isPolling || !url ? "not-allowed" : "pointer",
-              fontSize: 12, letterSpacing: "0.1em",
-              display: "flex", alignItems: "center", gap: 6,
-            }}
+            disabled={!url || isPolling}
+            style={{ opacity: !url || isPolling ? 0.5 : 1 }}
           >
-            {isPolling && <span className="pulse-dot" style={{ width: 6, height: 6 }} />}
-            {isPolling ? "АНАЛИЗ…" : "АНАЛИЗ"}
+            {isPolling ? "Анализирую…" : "Запустить аудит"}
           </button>
         </header>
 
         {/* Content */}
-        <main style={{ flex: 1, overflow: "auto", padding: 24 }}>
-
-          {/* Idle */}
-          {!report && !error && !status && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 14, textAlign: "center" }}>
-              <div style={{ fontSize: 44 }}>🛡️</div>
-              <div>
-                <p style={{ color: "var(--text-primary)", fontWeight: 600, fontSize: 17, marginBottom: 6 }}>Готов к аудиту</p>
-                <p style={{ color: "var(--text-secondary)", fontSize: 13, maxWidth: 300, lineHeight: 1.7 }}>
-                  Введите URL и нажмите <span style={{ color: "var(--red)", fontWeight: 600 }}>АНАЛИЗ</span>
-                </p>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
+        <main style={{ flex: 1, overflow: "auto", padding: "24px 28px" }}>
+          {/* Empty state */}
+          {!report && !status && !error && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 16, color: "var(--text-muted)" }}>
+              <div style={{ fontSize: 40 }}>🛡️</div>
+              <p style={{ fontSize: 14 }}>Введите URL и нажмите «Запустить аудит»</p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
                 {CATEGORIES.map(c => (
                   <span key={c} style={{ padding: "4px 14px", borderRadius: 99, border: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)" }}>{c}</span>
                 ))}
@@ -359,6 +411,7 @@ export default function DashboardPage() {
                 color: "var(--text-primary)",
                 fontSize: 13,
                 lineHeight: 1.55,
+                whiteSpace: "pre-wrap",
               }}>
                 {msg.text}
               </div>

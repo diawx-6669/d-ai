@@ -40,7 +40,9 @@ func main() {
 		auth.GET("/audit/:id", handlers.GetAudit)
 		auth.GET("/history", handlers.GetHistory)
 		auth.GET("/ws", handlers.WebSocketHandler)
-		auth.POST("/chat", handlers.ChatHandler) // ← добавлено
+		// FIX: имя хендлера приведено к ChatProxy — именно так функция
+		// называется в chat_handler.go. Было handlers.ChatHandler → 404.
+		auth.POST("/chat", handlers.ChatProxy)
 	}
 
 	// Health endpoint for readiness checks
