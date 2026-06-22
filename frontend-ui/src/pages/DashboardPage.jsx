@@ -80,19 +80,36 @@ export default function DashboardPage() {
     setChatInput("");
     setChatMessages(m => [...m, { role: "user", text: userMsg }]);
     setChatLoading(true);
+
+    // AbortController — отменяем запрос если сервер не ответил за 30 секунд
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+
     try {
-      const BASE = import.meta?.env?.VITE_API_BASE || "";
+      const BASE  = import.meta?.env?.VITE_API_BASE || "";
       const token = localStorage.getItem("dai_token") || "";
+
       const res = await fetch(`${BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ message: userMsg, report }),
+        signal: controller.signal,
       });
+
+      if (!res.ok) throw new Error(`Сервер вернул ${res.status}`);
+
       const data = await res.json();
       setChatMessages(m => [...m, { role: "assistant", text: data.reply || data.message || "…" }]);
-    } catch {
-      setChatMessages(m => [...m, { role: "assistant", text: "Ошибка соединения с AI-сервисом." }]);
+    } catch (err) {
+      const isTimeout = err.name === "AbortError";
+      setChatMessages(m => [...m, {
+        role: "assistant",
+        text: isTimeout
+          ? "⏱ AI-сервис не ответил за 30 секунд. Попробуйте позже."
+          : "Ошибка соединения с AI-сервисом.",
+      }]);
     } finally {
+      clearTimeout(timeoutId);
       setChatLoading(false);
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
     }

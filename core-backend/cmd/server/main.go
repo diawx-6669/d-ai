@@ -20,9 +20,6 @@ func main() {
 	r.Use(middleware.CORS())
 	r.Use(middleware.RequestLogger(log))
 
-	// Initialize DB from environment (DATABASE_URL). Fail fast if DB cannot be
-	// initialized or migrations cannot be applied. This ensures the service does
-	// not run in a degraded in-memory mode in production.
 	if err := db.InitFromConnString(os.Getenv("DATABASE_URL")); err != nil {
 		log.Fatal().Err(err).Msg("could not initialize DB")
 	}
@@ -43,6 +40,7 @@ func main() {
 		auth.GET("/audit/:id", handlers.GetAudit)
 		auth.GET("/history", handlers.GetHistory)
 		auth.GET("/ws", handlers.WebSocketHandler)
+		auth.POST("/chat", handlers.ChatHandler) // ← добавлено
 	}
 
 	// Health endpoint for readiness checks
