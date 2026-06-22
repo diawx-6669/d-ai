@@ -17,14 +17,35 @@ function scoreColor(score) {
   return "var(--red)";
 }
 
+function ScoreRing({ score }) {
+  const r = 36, circ = 2 * Math.PI * r;
+  const fill = circ - (score / 100) * circ;
+  return (
+    <svg width="88" height="88" viewBox="0 0 88 88">
+      <circle cx="44" cy="44" r={r} fill="none" stroke="var(--border)" strokeWidth="6" />
+      <circle cx="44" cy="44" r={r} fill="none"
+        stroke={scoreColor(score)} strokeWidth="6"
+        strokeDasharray={circ} strokeDashoffset={fill}
+        strokeLinecap="round"
+        transform="rotate(-90 44 44)"
+        style={{ transition: "stroke-dashoffset 0.8s ease" }}
+      />
+      <text x="44" y="48" textAnchor="middle"
+        fill={scoreColor(score)} fontSize="18" fontWeight="700"
+        fontFamily="var(--font-mono)">{score}</text>
+    </svg>
+  );
+}
+
 export default function DashboardPage() {
-  const [url, setUrl]       = useState("");
-  const [status, setStatus] = useState(null);
-  const [report, setReport] = useState(null);
-  const [error, setError]   = useState(null);
+  const [url, setUrl]             = useState("");
+  const [status, setStatus]       = useState(null);
+  const [report, setReport]       = useState(null);
+  const [error, setError]         = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState([
-    { role: "assistant", text: "Привет! Запустите аудит, и я помогу разобрать результаты." }
+    { role: "assistant", text: "Привет! Запустите аудит сайта, и я помогу разобрать результаты." }
   ]);
   const [chatLoading, setChatLoading] = useState(false);
   const intervalRef = useRef(null);
@@ -69,7 +90,7 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       setChatMessages(m => [...m, { role: "assistant", text: data.reply || data.message || "…" }]);
-    } catch (e) {
+    } catch {
       setChatMessages(m => [...m, { role: "assistant", text: "Ошибка соединения с AI-сервисом." }]);
     } finally {
       setChatLoading(false);
@@ -84,39 +105,69 @@ export default function DashboardPage() {
 
       {/* ── Sidebar ── */}
       <aside style={{
-        width: 200, flexShrink: 0,
+        width: sidebarOpen ? 200 : 52,
+        flexShrink: 0,
         background: "var(--bg-surface)",
         borderRight: "1px solid var(--border)",
-        display: "flex", flexDirection: "column",
-        padding: "20px 0",
+        display: "flex",
+        flexDirection: "column",
+        transition: "width 0.25s ease",
+        overflow: "hidden",
       }}>
-        <div style={{ padding: "0 20px 24px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ fontSize: 20 }}>🛡️</div>
-          <div style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 15, marginTop: 4 }}>d-ai</div>
+        {/* Logo */}
+        <div style={{ padding: "18px 14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 20, flexShrink: 0 }}>🛡️</span>
+          {sidebarOpen && <span style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 15 }}>d-ai</span>}
         </div>
-        <nav style={{ padding: "16px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+
+        {/* Nav */}
+        <nav style={{ padding: "12px 8px", display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
           {[
-            { label: "Новый аудит",  active: true },
-            { label: "Все аудиты",  active: false },
-          ].map(({ label, active }) => (
-            <div key={label} style={{
-              padding: "8px 12px",
+            { label: "Новый аудит", icon: "＋", active: true },
+            { label: "Все аудиты",  icon: "≡", active: false },
+          ].map(({ label, icon, active }) => (
+            <div key={label} title={!sidebarOpen ? label : undefined} style={{
+              padding: sidebarOpen ? "8px 12px" : "8px",
               borderRadius: "var(--radius-sm)",
               fontSize: 13,
               cursor: "pointer",
               color: active ? "var(--text-primary)" : "var(--text-secondary)",
               background: active ? "var(--bg-card)" : "transparent",
+              display: "flex", alignItems: "center", gap: 10,
+              whiteSpace: "nowrap",
               transition: "background var(--transition)",
-            }}>{label}</div>
+            }}>
+              <span style={{ fontSize: 15, flexShrink: 0, width: 18, textAlign: "center" }}>{icon}</span>
+              {sidebarOpen && label}
+            </div>
           ))}
         </nav>
-        <div style={{ marginTop: "auto", padding: "16px 20px", borderTop: "1px solid var(--border)" }}>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>© d-ai</div>
-        </div>
+
+        {/* Collapse button */}
+        <button onClick={() => setSidebarOpen(o => !o)} style={{
+          margin: "0 8px 12px",
+          padding: "8px",
+          background: "transparent",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-sm)",
+          color: "var(--text-muted)",
+          cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 16,
+          transition: "color var(--transition), border-color var(--transition)",
+        }}>
+          {sidebarOpen ? "◀" : "▶"}
+        </button>
+
+        {sidebarOpen && (
+          <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border)", fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+            © d-ai
+          </div>
+        )}
       </aside>
 
       {/* ── Main ── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
         {/* Topbar */}
         <header style={{
@@ -129,51 +180,51 @@ export default function DashboardPage() {
           <input
             value={url}
             onChange={e => setUrl(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && !isPolling && handleSubmit()}
+            onKeyDown={e => e.key === "Enter" && !isPolling && url && handleSubmit()}
             placeholder="https://example.com"
             disabled={isPolling}
-            style={{ flex: 1, padding: "8px 14px", fontSize: 14, maxWidth: 520 }}
+            style={{ flex: 1, padding: "8px 14px", fontSize: 14, maxWidth: 560 }}
           />
           <button
             className="btn-red"
             onClick={handleSubmit}
             disabled={isPolling || !url}
-            style={{ opacity: isPolling || !url ? 0.45 : 1, cursor: isPolling || !url ? "not-allowed" : "pointer", fontSize: 12, letterSpacing: "0.1em" }}
+            style={{
+              opacity: isPolling || !url ? 0.45 : 1,
+              cursor: isPolling || !url ? "not-allowed" : "pointer",
+              fontSize: 12, letterSpacing: "0.1em",
+              display: "flex", alignItems: "center", gap: 6,
+            }}
           >
+            {isPolling && <span className="pulse-dot" style={{ width: 6, height: 6 }} />}
             {isPolling ? "АНАЛИЗ…" : "АНАЛИЗ"}
           </button>
-          {isPolling && <span className="pulse-dot" />}
         </header>
 
         {/* Content */}
-        <main style={{ flex: 1, overflow: "auto", padding: 28 }}>
+        <main style={{ flex: 1, overflow: "auto", padding: 24 }}>
 
-          {/* Idle state */}
+          {/* Idle */}
           {!report && !error && !status && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 16, color: "var(--text-secondary)", textAlign: "center" }}>
-              <div style={{ fontSize: 40 }}>🛡️</div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 14, textAlign: "center" }}>
+              <div style={{ fontSize: 44 }}>🛡️</div>
               <div>
-                <p style={{ color: "var(--text-primary)", fontWeight: 600, fontSize: 16, marginBottom: 6 }}>Готов к аудиту</p>
-                <p style={{ fontSize: 13, maxWidth: 320, lineHeight: 1.6 }}>
-                  Введите URL сайта и нажмите <span style={{ color: "var(--red)", fontWeight: 600 }}>АНАЛИЗ</span>.<br />
-                  ИИ проверит его на ключевые параметры.
+                <p style={{ color: "var(--text-primary)", fontWeight: 600, fontSize: 17, marginBottom: 6 }}>Готов к аудиту</p>
+                <p style={{ color: "var(--text-secondary)", fontSize: 13, maxWidth: 300, lineHeight: 1.7 }}>
+                  Введите URL и нажмите <span style={{ color: "var(--red)", fontWeight: 600 }}>АНАЛИЗ</span>
                 </p>
               </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
                 {CATEGORIES.map(c => (
-                  <span key={c} style={{
-                    padding: "4px 12px", borderRadius: 99,
-                    border: "1px solid var(--border)",
-                    fontSize: 12, color: "var(--text-muted)",
-                  }}>{c}</span>
+                  <span key={c} style={{ padding: "4px 14px", borderRadius: 99, border: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)" }}>{c}</span>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Running status */}
+          {/* Running */}
           {status && status !== "done" && !report && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--text-secondary)", fontSize: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--text-secondary)", fontSize: 14, marginBottom: 16 }}>
               <span className="pulse-dot" />
               Статус: <strong style={{ color: "var(--text-primary)" }}>{status}</strong>
             </div>
@@ -188,27 +239,37 @@ export default function DashboardPage() {
 
           {/* Report */}
           {report && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-              {/* Score */}
-              <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "20px 24px", display: "flex", alignItems: "center", gap: 16 }}>
-                <span style={{ fontSize: 52, fontWeight: 800, color: scoreColor(report.score), letterSpacing: "-0.04em", lineHeight: 1 }}>{report.score}</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 680 }}>
+
+              {/* Score + summary row */}
+              <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "20px 24px", display: "flex", alignItems: "center", gap: 24 }}>
+                <ScoreRing score={report.score} />
                 <div>
-                  <div style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>Итоговая оценка</div>
-                  <div style={{ color: "var(--text-secondary)", fontSize: 13 }}>/100 баллов</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: 11, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>Итоговая оценка</div>
+                  <div style={{ color: "var(--text-primary)", fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1 }}>{report.score}<span style={{ fontSize: 14, color: "var(--text-muted)", fontWeight: 400 }}> / 100</span></div>
+                  {report.issues?.length > 0 && (
+                    <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                      <span className="badge badge-critical">{report.issues.filter(i => ["critical","high"].includes(i.severity?.toLowerCase())).length} critical</span>
+                      <span className="badge badge-warning">{report.issues.filter(i => ["warning","medium"].includes(i.severity?.toLowerCase())).length} warnings</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Issues */}
               {report.issues?.length > 0 && (
-                <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "20px 24px" }}>
-                  <h3 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Проблемы</h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+                  <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Проблемы</span>
+                    <span style={{ marginLeft: "auto", background: "var(--red-dim)", color: "var(--red)", fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 99 }}>{report.issues.length}</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column" }}>
                     {report.issues.map((issue, i) => (
-                      <div key={i} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "10px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                        <span className={severityClass(issue.severity)} style={{ flexShrink: 0, marginTop: 1 }}>{issue.severity}</span>
-                        <div>
+                      <div key={i} style={{ padding: "12px 20px", borderBottom: i < report.issues.length - 1 ? "1px solid var(--border)" : "none", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                        <span className={severityClass(issue.severity)} style={{ flexShrink: 0, marginTop: 2 }}>{issue.severity}</span>
+                        <div style={{ minWidth: 0 }}>
                           <span style={{ color: "var(--text-muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{issue.category}</span>
-                          <p style={{ color: "var(--text-primary)", fontSize: 13, marginTop: 2 }}>
+                          <p style={{ color: "var(--text-primary)", fontSize: 13, marginTop: 2, lineHeight: 1.5 }}>
                             {issue.description}
                             {issue.line && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> · строка {issue.line}</span>}
                           </p>
@@ -221,12 +282,15 @@ export default function DashboardPage() {
 
               {/* Recommendations */}
               {report.recommendations?.length > 0 && (
-                <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "20px 24px" }}>
-                  <h3 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Рекомендации</h3>
-                  <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+                  <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Рекомендации</span>
+                  </div>
+                  <ul style={{ listStyle: "none", margin: 0, padding: "8px 0" }}>
                     {report.recommendations.map((r, i) => (
-                      <li key={i} style={{ color: "var(--text-secondary)", fontSize: 13, display: "flex", gap: 8 }}>
-                        <span style={{ color: "var(--red)", flexShrink: 0 }}>›</span>{r}
+                      <li key={i} style={{ padding: "10px 20px", display: "flex", gap: 10, borderBottom: i < report.recommendations.length - 1 ? "1px solid var(--border)" : "none" }}>
+                        <span style={{ color: "var(--red)", fontSize: 16, lineHeight: 1.4, flexShrink: 0 }}>›</span>
+                        <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5 }}>{r}</span>
                       </li>
                     ))}
                   </ul>
@@ -235,12 +299,15 @@ export default function DashboardPage() {
 
               {/* Ideas */}
               {report.ideas?.length > 0 && (
-                <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "20px 24px" }}>
-                  <h3 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>Идеи</h3>
-                  <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
+                  <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Идеи</span>
+                  </div>
+                  <ul style={{ listStyle: "none", margin: 0, padding: "8px 0" }}>
                     {report.ideas.map((idea, i) => (
-                      <li key={i} style={{ color: "var(--text-secondary)", fontSize: 13, display: "flex", gap: 8 }}>
-                        <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>·</span>{idea}
+                      <li key={i} style={{ padding: "10px 20px", display: "flex", gap: 10, borderBottom: i < report.ideas.length - 1 ? "1px solid var(--border)" : "none" }}>
+                        <span style={{ color: "var(--text-muted)", flexShrink: 0, lineHeight: 1.4 }}>·</span>
+                        <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5 }}>{idea}</span>
                       </li>
                     ))}
                   </ul>
@@ -251,54 +318,50 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* ── Chat sidebar ── */}
+      {/* ── Chat panel ── */}
       <aside style={{
-        width: 300, flexShrink: 0,
+        width: 288, flexShrink: 0,
         background: "var(--bg-surface)",
         borderLeft: "1px solid var(--border)",
         display: "flex", flexDirection: "column",
       }}>
-        <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          AI-ассистент
+        <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--red)", flexShrink: 0, animation: "pulse-dot 1.6s infinite" }} />
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>AI-ассистент</span>
         </div>
 
-        {/* Messages */}
-        <div style={{ flex: 1, overflow: "auto", padding: "16px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
           {chatMessages.map((msg, i) => (
-            <div key={i} style={{
-              display: "flex",
-              justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-            }}>
+            <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
               <div style={{
-                maxWidth: "85%",
+                maxWidth: "84%",
                 padding: "8px 12px",
-                borderRadius: msg.role === "user" ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
+                borderRadius: msg.role === "user" ? "12px 12px 3px 12px" : "12px 12px 12px 3px",
                 background: msg.role === "user" ? "var(--red)" : "var(--bg-card)",
                 border: msg.role === "user" ? "none" : "1px solid var(--border)",
                 color: "var(--text-primary)",
                 fontSize: 13,
-                lineHeight: 1.5,
+                lineHeight: 1.55,
               }}>
                 {msg.text}
               </div>
             </div>
           ))}
           {chatLoading && (
-            <div style={{ display: "flex", gap: 4, padding: "8px 0" }}>
+            <div style={{ display: "flex", gap: 5, padding: "6px 4px" }}>
               {[0,1,2].map(i => (
-                <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-muted)", animation: `pulse-dot 1.2s ${i*0.2}s infinite` }} />
+                <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--text-muted)", animation: `pulse-dot 1.2s ${i * 0.18}s infinite` }} />
               ))}
             </div>
           )}
           <div ref={chatEndRef} />
         </div>
 
-        {/* Input */}
-        <div style={{ padding: "12px 12px", borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
+        <div style={{ padding: "10px 12px", borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
           <input
             value={chatInput}
             onChange={e => setChatInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleChat()}
+            onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleChat()}
             placeholder="Спросите об аудите…"
             style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
           />
@@ -306,7 +369,7 @@ export default function DashboardPage() {
             className="btn-red"
             onClick={handleChat}
             disabled={!chatInput.trim() || chatLoading}
-            style={{ padding: "8px 14px", fontSize: 13, opacity: !chatInput.trim() || chatLoading ? 0.45 : 1, cursor: !chatInput.trim() || chatLoading ? "not-allowed" : "pointer" }}
+            style={{ padding: "8px 13px", fontSize: 15, opacity: !chatInput.trim() || chatLoading ? 0.4 : 1, cursor: !chatInput.trim() || chatLoading ? "not-allowed" : "pointer" }}
           >
             →
           </button>
