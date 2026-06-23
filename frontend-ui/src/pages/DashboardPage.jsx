@@ -37,6 +37,22 @@ function ScoreRing({ score }) {
   );
 }
 
+// Форматирует текст ошибки из SSE в понятное сообщение
+function friendlyError(errText) {
+  if (!errText) return "⚠️ Неизвестная ошибка.";
+  if (errText.includes("quota") || errText.includes("RESOURCE_EXHAUSTED") || errText.includes("exceeded"))
+    return "⚠️ Превышен лимит Gemini API. Подождите минуту и попробуйте снова.";
+  if (errText.includes("not found") || errText.includes("404"))
+    return "⚠️ Модель AI недоступна. Обратитесь к администратору.";
+  if (errText.includes("25 секунд") || errText.includes("timeout") || errText.includes("Таймаут"))
+    return "⏱ AI-сервис не успел ответить. Попробуйте снова.";
+  if (errText.includes("connection refused") || errText.includes("недоступен"))
+    return "⚠️ AI-сервис временно недоступен. Попробуйте позже.";
+  // Обрезаем длинные технические сообщения
+  if (errText.length > 120) return "⚠️ Ошибка AI-сервиса. Попробуйте позже.";
+  return `⚠️ ${errText}`;
+}
+
 export default function DashboardPage() {
   const [url, setUrl]             = useState("");
   const [status, setStatus]       = useState(null);
@@ -81,12 +97,9 @@ export default function DashboardPage() {
     setChatMessages(m => [...m, { role: "user", text: userMsg }]);
     setChatLoading(true);
 
-    // AbortController — отменяем запрос если сервер не ответил за 30 секунд
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
-    // Индекс сообщения-ответа ассистента — будем дополнять его по мере
-    // прихода SSE-чанков (стриминг), а не ждать весь ответ целиком.
     let assistantIdx = null;
 
     const appendChunk = (chunk) => {
@@ -112,17 +125,15 @@ export default function DashboardPage() {
         signal: controller.signal,
       });
 
-      // Нет тела — сразу читаем JSON-ошибку
       if (!res.ok) {
         let detail = `Сервер вернул ${res.status}`;
         try {
           const json = await res.json();
-          if (json?.error) detail = json.error;
-        } catch (_) { /* ignore */ }
+          if (json?.error) detail = friendlyError(json.error);
+        } catch (_) {}
         throw new Error(detail);
       }
 
-      // Бэкенд отдаёт SSE-стрим: читаем построчно через ReadableStream
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -133,7 +144,6 @@ export default function DashboardPage() {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-        // Последняя строка может быть незавершённой — оставляем в буфере
         buffer = lines.pop();
 
         for (const line of lines) {
@@ -143,22 +153,19 @@ export default function DashboardPage() {
 
           try {
             const parsed = JSON.parse(raw);
-            // Ошибка в SSE-потоке (таймаут на Go-стороне и т.п.)
             if (parsed?.error) {
-              appendChunk(parsed.error);
+              appendChunk(friendlyError(parsed.error));
               return;
             }
-            // Стандартный чанк: { delta } или { text } или { reply }
-            const text = parsed?.delta ?? parsed?.text ?? parsed?.reply ?? parsed?.message;
+            // Поддерживаем форматы: { chunk }, { delta }, { text }, { reply }, { message }
+            const text = parsed?.chunk ?? parsed?.delta ?? parsed?.text ?? parsed?.reply ?? parsed?.message;
             if (text) appendChunk(text);
           } catch (_) {
-            // Нераспарсенный чанк — добавляем как есть
-            if (raw) appendChunk(raw);
+            // Нераспарсенный чанк — пропускаем, не показываем мусор
           }
         }
       }
 
-      // Если ни одного чанка не пришло — показываем fallback
       if (assistantIdx === null) {
         appendChunk("(пустой ответ от AI-сервиса)");
       }
@@ -166,12 +173,11 @@ export default function DashboardPage() {
       const isTimeout = err.name === "AbortError";
       const text = isTimeout
         ? "⏱ AI-сервис не ответил за 30 секунд. Попробуйте позже."
-        : `Ошибка соединения с AI-сервисом: ${err.message}`;
+        : friendlyError(err.message);
 
       if (assistantIdx !== null) {
-        // Дописываем ошибку к уже начатому сообщению
         setChatMessages(m =>
-          m.map((msg, i) => i === assistantIdx ? { ...msg, text: msg.text + `\n\n⚠️ ${text}` } : msg)
+          m.map((msg, i) => i === assistantIdx ? { ...msg, text: msg.text + `\n\n${text}` } : msg)
         );
       } else {
         appendChunk(text);
@@ -199,13 +205,11 @@ export default function DashboardPage() {
         transition: "width 0.25s ease",
         overflow: "hidden",
       }}>
-        {/* Logo */}
         <div style={{ padding: "18px 14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, whiteSpace: "nowrap" }}>
           <span style={{ fontSize: 20, flexShrink: 0 }}>🛡️</span>
           {sidebarOpen && <span style={{ color: "var(--text-primary)", fontWeight: 700, fontSize: 15 }}>d-ai</span>}
         </div>
 
-        {/* Nav */}
         <nav style={{ padding: "12px 8px", display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
           {[
             { label: "Новый аудит", icon: "＋", active: true },
@@ -228,7 +232,6 @@ export default function DashboardPage() {
           ))}
         </nav>
 
-        {/* Collapse button */}
         <button onClick={() => setSidebarOpen(o => !o)} style={{
           margin: "0 8px 12px",
           padding: "7px",
@@ -247,8 +250,7 @@ export default function DashboardPage() {
       </aside>
 
       {/* ── Main ── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {/* Topbar */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         <header style={{
           padding: "0 24px",
           height: 56,
@@ -276,9 +278,7 @@ export default function DashboardPage() {
           </button>
         </header>
 
-        {/* Content */}
         <main style={{ flex: 1, overflow: "auto", padding: "24px 28px" }}>
-          {/* Empty state */}
           {!report && !status && !error && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 16, color: "var(--text-muted)" }}>
               <div style={{ fontSize: 40 }}>🛡️</div>
@@ -291,7 +291,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Running */}
           {status && status !== "done" && !report && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--text-secondary)", fontSize: 14, marginBottom: 16 }}>
               <span className="pulse-dot" />
@@ -299,18 +298,14 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Error */}
           {error && (
             <div style={{ padding: "12px 16px", background: "var(--red-dim)", border: "1px solid var(--border-focus)", borderRadius: "var(--radius-sm)", color: "var(--red)", fontSize: 14 }}>
               {error}
             </div>
           )}
 
-          {/* Report */}
           {report && (
             <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 680 }}>
-
-              {/* Score + summary row */}
               <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: "20px 24px", display: "flex", alignItems: "center", gap: 24 }}>
                 <ScoreRing score={report.score} />
                 <div>
@@ -325,7 +320,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Issues */}
               {report.issues?.length > 0 && (
                 <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
                   <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
@@ -338,7 +332,7 @@ export default function DashboardPage() {
                         <span className={severityClass(issue.severity)} style={{ flexShrink: 0, marginTop: 2 }}>{issue.severity}</span>
                         <div style={{ minWidth: 0 }}>
                           <span style={{ color: "var(--text-muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}>{issue.category}</span>
-                          <p style={{ color: "var(--text-primary)", fontSize: 13, marginTop: 2, lineHeight: 1.5 }}>
+                          <p style={{ color: "var(--text-primary)", fontSize: 13, marginTop: 2, lineHeight: 1.5, wordBreak: "break-word" }}>
                             {issue.description}
                             {issue.line && <span style={{ color: "var(--text-muted)", fontSize: 11 }}> · строка {issue.line}</span>}
                           </p>
@@ -349,7 +343,6 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              {/* Recommendations */}
               {report.recommendations?.length > 0 && (
                 <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
                   <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
@@ -359,14 +352,13 @@ export default function DashboardPage() {
                     {report.recommendations.map((r, i) => (
                       <li key={i} style={{ padding: "10px 20px", display: "flex", gap: 10, borderBottom: i < report.recommendations.length - 1 ? "1px solid var(--border)" : "none" }}>
                         <span style={{ color: "var(--red)", fontSize: 16, lineHeight: 1.4, flexShrink: 0 }}>›</span>
-                        <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5 }}>{r}</span>
+                        <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, wordBreak: "break-word" }}>{r}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              {/* Ideas */}
               {report.ideas?.length > 0 && (
                 <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden" }}>
                   <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)" }}>
@@ -376,7 +368,7 @@ export default function DashboardPage() {
                     {report.ideas.map((idea, i) => (
                       <li key={i} style={{ padding: "10px 20px", display: "flex", gap: 10, borderBottom: i < report.ideas.length - 1 ? "1px solid var(--border)" : "none" }}>
                         <span style={{ color: "var(--text-muted)", flexShrink: 0, lineHeight: 1.4 }}>·</span>
-                        <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5 }}>{idea}</span>
+                        <span style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, wordBreak: "break-word" }}>{idea}</span>
                       </li>
                     ))}
                   </ul>
@@ -389,21 +381,26 @@ export default function DashboardPage() {
 
       {/* ── Chat panel ── */}
       <aside style={{
-        width: 288, flexShrink: 0,
+        width: 300,
+        flexShrink: 0,
         background: "var(--bg-surface)",
         borderLeft: "1px solid var(--border)",
-        display: "flex", flexDirection: "column",
+        display: "flex",
+        flexDirection: "column",
+        minWidth: 0,
       }}>
         <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--red)", flexShrink: 0, animation: "pulse-dot 1.6s infinite" }} />
           <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>AI-ассистент</span>
         </div>
 
-        <div style={{ flex: 1, overflow: "auto", padding: "14px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "14px", display: "flex", flexDirection: "column", gap: 10 }}>
           {chatMessages.map((msg, i) => (
             <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
               <div style={{
-                maxWidth: "84%",
+                /* FIX: текст не выходит за рамки */
+                maxWidth: "85%",
+                minWidth: 0,
                 padding: "8px 12px",
                 borderRadius: msg.role === "user" ? "12px 12px 3px 12px" : "12px 12px 12px 3px",
                 background: msg.role === "user" ? "var(--red)" : "var(--bg-card)",
@@ -412,6 +409,8 @@ export default function DashboardPage() {
                 fontSize: 13,
                 lineHeight: 1.55,
                 whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                overflowWrap: "break-word",
               }}>
                 {msg.text}
               </div>
@@ -433,13 +432,13 @@ export default function DashboardPage() {
             onChange={e => setChatInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleChat()}
             placeholder="Спросите об аудите…"
-            style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
+            style={{ flex: 1, minWidth: 0, padding: "8px 12px", fontSize: 13 }}
           />
           <button
             className="btn-red"
             onClick={handleChat}
             disabled={!chatInput.trim() || chatLoading}
-            style={{ padding: "8px 13px", fontSize: 15, opacity: !chatInput.trim() || chatLoading ? 0.4 : 1, cursor: !chatInput.trim() || chatLoading ? "not-allowed" : "pointer" }}
+            style={{ padding: "8px 13px", fontSize: 15, flexShrink: 0, opacity: !chatInput.trim() || chatLoading ? 0.4 : 1, cursor: !chatInput.trim() || chatLoading ? "not-allowed" : "pointer" }}
           >
             →
           </button>
