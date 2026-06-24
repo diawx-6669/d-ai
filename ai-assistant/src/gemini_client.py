@@ -1,28 +1,30 @@
 """
-gemini_client.py — Thin wrapper around the Google Generative AI SDK.
+gemini_client.py — Thin wrapper around the Groq API (OpenAI-compatible).
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import textwrap
 from typing import Generator
 
-import google.generativeai as genai
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-
-def _model() -> genai.GenerativeModel:
-    return genai.GenerativeModel(_MODEL)
+_client = OpenAI(
+    api_key=os.environ["GROQ_API_KEY"],
+    base_url="https://api.groq.com/openai/v1",
+)
 
 
 def generate_report(crawl_json: dict) -> dict:
     """
-    Given structured crawl data, ask Gemini to produce a full audit report.
+    Given structured crawl data, ask the model to produce a full audit report.
     Returns a dict with keys: issues, recommendations, ideas.
     """
     prompt = textwrap.dedent(f"""
@@ -38,26 +40,53 @@ def generate_report(crawl_json: dict) -> dict:
         CRAWL DATA:
         {crawl_json}
     """)
-    model = _model()
-    resp = model.generate_content(prompt)
-    import json, re
-    text = resp.text
-    # strip possible markdown fences
+
+    resp = _client.chat.completions.create(
+        model=_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+    )
+
+    text = resp.choices[0].message.content
+    # strip possible markdown fences just in case
     text = re.sub(r"```(?:json)?", "", text).strip().rstrip("`")
     return json.loads(text)
 
 
 def stream_chat(history: list[dict], user_message: str) -> Generator[str, None, None]:
     """
-    Stream a chat reply from Gemini.
-    history = [{"role": "user"|"model", "parts": [str]}, …]
+    Stream a chat reply from Groq.
+    history = [{"role": "user"|"assistant", "content": str}, …]
+
+    Note: Groq/OpenAI uses "assistant" role (not "model" like Gemini).
+    If your existing history uses "model", convert it before passing here.
     """
-    system = (
-        "You are d-ai, an expert website auditor and developer assistant. "
-        "Answer concisely and technically. Use markdown for code blocks."
+    system_message = {
+        "role": "system",
+        "content": (
+            "You are d-ai, an expert website auditor and developer assistant. "
+            "Answer concisely and technically. Use markdown for code blocks."
+        ),
+    }
+
+    # Normalise Gemini-style "model" role -> "assistant" just in case
+    normalised_history = [
+        {"role": "assistant" if m["role"] == "model" else m["role"],
+         "content": m["content"] if isinstance(m["content"], str) else m["content"][0]}
+        for m in history
+    ]
+
+    messages = [system_message] + normalised_history + [
+        {"role": "user", "content": user_message}
+    ]
+
+    stream = _client.chat.completions.create(
+        model=_MODEL,
+        messages=messages,
+        stream=True,
     )
-    model = _model()
-    chat = model.start_chat(history=history)
-    resp = chat.send_message(user_message, stream=True)
-    for chunk in resp:
-        yield chunk.text
+
+    for chunk in stream:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            yield delta
