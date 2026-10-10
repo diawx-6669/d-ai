@@ -11,6 +11,14 @@ from .crawler import CrawlResult
 Severity = Literal["critical", "warning", "info"]
 Category = Literal["seo", "performance", "security", "accessibility"]
 
+TITLE_MAX_LEN = 60
+META_MIN_LEN = 50
+META_MAX_LEN = 160
+SLOW_MS = 3000
+SLUGGISH_MS = 1500
+LARGE_PAGE_BYTES = 2_000_000
+INLINE_SCRIPT_LIMIT = 5
+
 
 @dataclass
 class Issue:
@@ -22,41 +30,50 @@ class Issue:
 def analyze(result: CrawlResult) -> list[Issue]:
     issues: list[Issue] = []
 
-    # — SEO ——————————————————————————————————————————————
+    # — HTTP status ———————————————————————————————————————
+    if result.status_code >= 500:
+        issues.append(Issue("critical", "performance", f"Сервер ответил {result.status_code}."))
+    elif result.status_code >= 400:
+        issues.append(Issue("critical", "seo", f"Страница отдаёт {result.status_code} — она недоступна для посетителей и поисковиков."))
+
+    # — SEO ———————————————————————————————————————————————
     if not result.title:
-        issues.append(Issue("critical", "seo", "Page is missing a <title> tag."))
-    elif len(result.title) > 60:
-        issues.append(Issue("warning", "seo", f"Title is {len(result.title)} chars (recommended ≤60)."))
+        issues.append(Issue("critical", "seo", "У страницы нет тега <title>."))
+    elif len(result.title) > TITLE_MAX_LEN:
+        issues.append(Issue("warning", "seo", f"Заголовок страницы — {len(result.title)} символов (рекомендуется до {TITLE_MAX_LEN})."))
 
     if not result.meta_description:
-        issues.append(Issue("warning", "seo", "Meta description is missing."))
+        issues.append(Issue("warning", "seo", "Не заполнен meta description."))
+    elif len(result.meta_description) < META_MIN_LEN:
+        issues.append(Issue("info", "seo", f"Meta description очень короткий — {len(result.meta_description)} символов (оптимально {META_MIN_LEN}–{META_MAX_LEN})."))
+    elif len(result.meta_description) > META_MAX_LEN:
+        issues.append(Issue("info", "seo", f"Meta description длиннее {META_MAX_LEN} символов — поисковик обрежет его в выдаче."))
 
     h1s = result.headings.get("h1", [])
     if len(h1s) == 0:
-        issues.append(Issue("critical", "seo", "No <h1> heading found."))
+        issues.append(Issue("critical", "seo", "На странице нет заголовка <h1>."))
     elif len(h1s) > 1:
-        issues.append(Issue("warning", "seo", f"Multiple <h1> tags found ({len(h1s)})."))
+        issues.append(Issue("warning", "seo", f"Несколько тегов <h1> на одной странице ({len(h1s)})."))
 
-    # — Accessibility ————————————————————————————————————
+    # — Accessibility ——————————————————————————————————————
     if result.images_without_alt:
-        n = len(result.images_without_alt)
-        issues.append(Issue("warning", "accessibility", f"{n} image(s) missing alt attribute."))
+        count = len(result.images_without_alt)
+        issues.append(Issue("warning", "accessibility", f"У {count} изображений нет атрибута alt."))
 
-    # — Performance ——————————————————————————————————————
-    if result.load_time_ms > 3000:
-        issues.append(Issue("critical", "performance", f"Load time {result.load_time_ms:.0f} ms exceeds 3 s."))
-    elif result.load_time_ms > 1500:
-        issues.append(Issue("warning", "performance", f"Load time {result.load_time_ms:.0f} ms is above 1.5 s."))
+    # — Performance ————————————————————————————————————————
+    if result.load_time_ms > SLOW_MS:
+        issues.append(Issue("critical", "performance", f"Страница загружалась {result.load_time_ms:.0f} мс — это больше 3 с."))
+    elif result.load_time_ms > SLUGGISH_MS:
+        issues.append(Issue("warning", "performance", f"Страница загружалась {result.load_time_ms:.0f} мс — это больше 1,5 с."))
 
-    if result.page_size_bytes > 2_000_000:
-        kb = result.page_size_bytes // 1024
-        issues.append(Issue("warning", "performance", f"Page size {kb} KB exceeds 2 MB."))
+    if result.page_size_bytes > LARGE_PAGE_BYTES:
+        issues.append(Issue("warning", "performance", f"Размер HTML — {result.page_size_bytes // 1024} КБ, больше 2 МБ."))
 
-    if result.inline_scripts > 5:
-        issues.append(Issue("info", "performance", f"{result.inline_scripts} inline <script> blocks — consider externalizing."))
+    if result.inline_scripts > INLINE_SCRIPT_LIMIT:
+        issues.append(Issue("info", "performance", f"{result.inline_scripts} inline-блоков <script> — их стоит вынести в отдельные файлы."))
 
-    # — Security ——————————————————————————————————————
-    if "https" not in result.url:
-        issues.append(Issue("critical", "security", "Site is not served over HTTPS."))
+    # — Security ———————————————————————————————————————————
+    if not result.https:
+        issues.append(Issue("critical", "security", "Сайт отдаётся не по HTTPS."))
 
     return issues
