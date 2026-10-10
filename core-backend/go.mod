@@ -6,7 +6,6 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.1
 	github.com/lib/pq v1.10.5
 	github.com/rs/zerolog v1.33.0
 	golang.org/x/crypto v0.23.0
@@ -41,5 +40,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-// Use local copy of the module during development/build in container
-replace github.com/d-ai/core-backend => .

@@ -1,109 +1,132 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
-	"os"
+	"strings"
 	"time"
+	"unicode/utf8"
 
-	"github.com/d-ai/core-backend/internal/db"
+	"github.com/d-ai/core-backend/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-type loginBody struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+const (
+	tokenTTL          = 24 * time.Hour
+	minPasswordLength = 8
+	maxPasswordLength = 72 // bcrypt silently ignores anything past 72 bytes
+	maxUsernameLength = 32
+)
+
+type credentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
-type registerBody struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
-}
+// A fixed hash to compare against when the user does not exist, so that
+// "unknown user" and "wrong password" take the same time to answer.
+var dummyHash = []byte("$2a$12$VBSTLlNQWaG2.D9BXZD3y.8fQ8iy5S5TpBU/a1SzEBEJdfRmmttNa")
 
-// Login validates credentials against the DB and returns a signed JWT.
-func Login(c *gin.Context) {
-	var body loginBody
+func (a *API) Login(c *gin.Context) {
+	var body credentials
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "username and password required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Укажите имя пользователя и пароль"})
+		return
+	}
+	body.Username = strings.TrimSpace(body.Username)
+	if body.Username == "" || body.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Укажите имя пользователя и пароль"})
 		return
 	}
 
-	// Fetch the stored password hash from the DB.
-	var hashedPassword string
-	row := db.DB.QueryRow("SELECT password_hash FROM users WHERE username = $1", body.Username)
-	if err := row.Scan(&hashedPassword); err != nil {
-		// User not found or DB error — return unauthorized to avoid enumeration
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
+	user, err := a.Store.UserByUsername(c.Request.Context(), body.Username)
+	if errors.Is(err, store.ErrNotFound) {
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(body.Password))
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный логин или пароль"})
 		return
 	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(body.Password)); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
-		return
-	}
-
-	token, err := signToken(body.Username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not sign token"})
+		a.Log.Error().Err(err).Msg("login: store lookup failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера, попробуйте позже"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"token": token})
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Неверный логин или пароль"})
+		return
+	}
+
+	token, err := a.signToken(user.Username)
+	if err != nil {
+		a.Log.Error().Err(err).Msg("login: could not sign token")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось выдать токен"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"token": token, "username": user.Username})
 }
 
-// Register hashes the password and stores the new user in the DB.
-func Register(c *gin.Context) {
-	var body registerBody
+func (a *API) Register(c *gin.Context) {
+	var body credentials
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "username and password required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Укажите имя пользователя и пароль"})
+		return
+	}
+	body.Username = strings.TrimSpace(body.Username)
+
+	if msg := validateCredentials(body); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": msg})
 		return
 	}
 
-	// Check that the username is not already taken.
-	var exists bool
-	row := db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", body.Username)
-	if err := row.Scan(&exists); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
-		return
-	}
-	if exists {
-		c.JSON(http.StatusConflict, gin.H{"error": "username already taken"})
-		return
-	}
-
-	// Hash password with bcrypt (cost 12 is a reasonable default).
-	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not hash password"})
+		a.Log.Error().Err(err).Msg("register: hashing failed")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Ошибка сервера, попробуйте позже"})
 		return
 	}
 
-	// Insert the new user into DB.
-	_, err = db.DB.Exec(
-		"INSERT INTO users (username, password_hash, created_at) VALUES ($1, $2, NOW())",
-		body.Username, string(hash),
-	)
+	user, err := a.Store.CreateUser(c.Request.Context(), body.Username, string(hash))
+	if errors.Is(err, store.ErrUserExists) {
+		c.JSON(http.StatusConflict, gin.H{"error": "Это имя пользователя уже занято"})
+		return
+	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create user"})
+		a.Log.Error().Err(err).Msg("register: could not create user")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось создать пользователя"})
 		return
 	}
 
-	token, err := signToken(body.Username)
+	token, err := a.signToken(user.Username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not sign token"})
+		a.Log.Error().Err(err).Msg("register: could not sign token")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось выдать токен"})
 		return
 	}
-
-	c.JSON(http.StatusCreated, gin.H{"token": token})
+	c.JSON(http.StatusCreated, gin.H{"token": token, "username": user.Username})
 }
 
-// signToken is a shared helper so Login and Register use the same JWT logic.
-func signToken(username string) (string, error) {
+func validateCredentials(body credentials) string {
+	switch {
+	case body.Username == "":
+		return "Укажите имя пользователя"
+	case utf8.RuneCountInString(body.Username) > maxUsernameLength:
+		return "Имя пользователя не длиннее 32 символов"
+	case len(body.Password) < minPasswordLength:
+		return "Пароль должен быть не короче 8 символов"
+	case len(body.Password) > maxPasswordLength:
+		return "Пароль не длиннее 72 символов"
+	}
+	return ""
+}
+
+func (a *API) signToken(username string) (string, error) {
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"sub": username,
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
+		"iat": now.Unix(),
+		"exp": now.Add(tokenTTL).Unix(),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.JWTSecret)
 }

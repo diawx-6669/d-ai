@@ -1,118 +1,121 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-const aiServiceTimeout = 25 * time.Second
+const (
+	aiServiceTimeout = 60 * time.Second
+	maxChatBodyBytes = 256 << 10 // 256 KiB is plenty for a message plus a report
+)
 
-var aiBase = func() string {
-	if v := os.Getenv("AI_SERVICE_BASE"); v != "" {
-		return v
-	}
-	return "http://localhost:5002"
-}()
+// chatClient has no Timeout of its own: a streaming response must be allowed
+// to stay open, so the deadline lives on the request context instead.
+var chatClient = &http.Client{}
 
-// ChatProxy проксирует SSE-поток от Python AI-сервиса с таймаутом 25 с.
+// ChatProxy streams the AI service's SSE response back to the browser.
 //
-// Маршрут: POST /api/chat (зарегистрирован в main.go как handlers.ChatProxy).
-//
-// Поведение при ошибках:
-//   - таймаут (25 с)  → SSE-событие с JSON-ошибкой + [DONE]
-//   - клиент закрыл  → тихий выход
-//   - плохой gateway → JSON 502
-//   - прочее         → JSON 500
-func ChatProxy(c *gin.Context) {
-	// Объединяем таймаут прокси с контекстом клиентского запроса:
-	// если клиент закрыл соединение — контекст отменяется немедленно.
+// Errors are reported as SSE events once the stream has started (the browser
+// is already reading a stream and cannot switch to a JSON body), and as plain
+// JSON before that.
+func (a *API) ChatProxy(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), aiServiceTimeout)
 	defer cancel()
 
-	body := c.Request.Body
-	defer body.Close()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, aiBase+"/chat", body)
+	// The body is buffered rather than streamed upstream. Handing an unsized
+	// io.Reader to http.NewRequest leaves ContentLength unknown, so Go sends
+	// the request chunked -- and the WSGI server upstream then reports no
+	// body at all, which is how the chat silently received an empty message.
+	// 256 KiB is small enough to hold in memory.
+	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxChatBodyBytes))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("не удалось сформировать запрос к AI-сервису: %v", err),
-		})
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "Слишком длинный запрос"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Не удалось прочитать запрос"})
+		return
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.AIBase+"/chat", bytes.NewReader(body))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Не удалось обратиться к AI-сервису"})
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = int64(len(body))
 
-	// Клиент без глобального таймаута — таймаут управляется контекстом.
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := chatClient.Do(req)
 	if err != nil {
 		switch ctx.Err() {
 		case context.DeadlineExceeded:
-			// Отдаём ошибку в формате SSE, чтобы фронтенд мог её распарсить
-			// в потоковом режиме так же, как обычные чанки.
-			c.Header("Content-Type", "text/event-stream")
-			c.Header("Cache-Control", "no-cache")
-			c.Header("X-Accel-Buffering", "no")
-			c.Status(http.StatusGatewayTimeout)
-			fmt.Fprint(c.Writer, "data: {\"error\":\"AI-сервис не ответил за 25 секунд. Попробуйте позже.\"}\n\n")
-			fmt.Fprint(c.Writer, "data: [DONE]\n\n")
-			c.Writer.Flush()
-		case context.Canceled:
-			// Клиент закрыл соединение до ответа — просто выходим.
-		default:
-			c.JSON(http.StatusBadGateway, gin.H{
-				"error": fmt.Sprintf("AI-сервис недоступен: %v", err),
+			c.JSON(http.StatusGatewayTimeout, gin.H{
+				"error": "AI-сервис не ответил за 60 секунд. Попробуйте позже.",
 			})
+		case context.Canceled:
+			// The browser went away before the upstream answered.
+		default:
+			a.Log.Warn().Err(err).Msg("ai service unreachable")
+			c.JSON(http.StatusBadGateway, gin.H{"error": "AI-сервис недоступен. Попробуйте позже."})
 		}
 		return
 	}
 	defer resp.Body.Close()
 
-	// Если upstream вернул не-2xx — читаем тело и отдаём понятный JSON.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		upstreamBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		c.JSON(http.StatusBadGateway, gin.H{
-			"error":           fmt.Sprintf("AI-сервис вернул статус %d", resp.StatusCode),
-			"upstream_detail": string(upstreamBody),
-		})
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		var upstream struct {
+			Error string `json:"error"`
+		}
+		msg := fmt.Sprintf("AI-сервис вернул статус %d", resp.StatusCode)
+		if json.Unmarshal(detail, &upstream) == nil && upstream.Error != "" {
+			msg = upstream.Error
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": msg})
 		return
 	}
 
-	// Прокидываем SSE-заголовки клиенту.
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
 
+	flusher, canFlush := c.Writer.(http.Flusher)
 	buf := make([]byte, 4096)
 	for {
-		// Проверяем контекст перед каждым чтением.
-		if ctx.Err() != nil {
-			fmt.Fprint(c.Writer, "data: {\"error\":\"Таймаут соединения\"}\n\n")
-			fmt.Fprint(c.Writer, "data: [DONE]\n\n")
-			c.Writer.Flush()
-			return
-		}
-
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
-				return // клиент отключился
+				return // client disconnected
 			}
-			c.Writer.Flush()
+			if canFlush {
+				flusher.Flush()
+			}
 		}
 		if readErr == io.EOF {
-			break
+			return
 		}
 		if readErr != nil {
-			// Сеть упала посередине стрима — шлём финальное событие.
-			fmt.Fprintf(c.Writer, "data: {\"error\":\"Соединение с AI-сервисом прервано: %v\"}\n\n", readErr)
+			if ctx.Err() == context.Canceled {
+				return // client disconnected
+			}
+			a.Log.Warn().Err(readErr).Msg("ai stream interrupted")
+			fmt.Fprint(c.Writer, "data: {\"error\":\"Соединение с AI-сервисом прервано\"}\n\n")
 			fmt.Fprint(c.Writer, "data: [DONE]\n\n")
-			c.Writer.Flush()
+			if canFlush {
+				flusher.Flush()
+			}
 			return
 		}
 	}

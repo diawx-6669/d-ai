@@ -2,30 +2,41 @@ package middleware
 
 import (
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func JWTAuth() gin.HandlerFunc {
+// JWTAuth validates the bearer token and stores the subject as "userID".
+//
+// The secret is injected rather than read from the environment on every
+// request, and the accepted algorithm is pinned to HS256 so a token can never
+// be presented with a different (or absent) signing method.
+func JWTAuth(secret []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Нужна авторизация"})
 			return
 		}
-		raw := strings.TrimPrefix(header, "Bearer ")
-		tok, err := jwt.Parse(raw, func(t *jwt.Token) (interface{}, error) {
-			return []byte(os.Getenv("JWT_SECRET")), nil
-		})
-		if err != nil || !tok.Valid {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+		raw := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+
+		token, err := jwt.Parse(raw, func(*jwt.Token) (interface{}, error) {
+			return secret, nil
+		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+		if err != nil || !token.Valid {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Сессия истекла, войдите заново"})
 			return
 		}
-		claims, _ := tok.Claims.(jwt.MapClaims)
-		c.Set("userID", claims["sub"])
+
+		subject, err := token.Claims.GetSubject()
+		if err != nil || subject == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Некорректный токен"})
+			return
+		}
+
+		c.Set("userID", subject)
 		c.Next()
 	}
 }
