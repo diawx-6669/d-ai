@@ -1,53 +1,83 @@
-# STAGE 1: Build Go backend
-FROM golang:1.25-alpine AS backend-build
-WORKDIR /app
-COPY core-backend/ .
-RUN go mod download && \
-	go build -o server ./cmd/server/main.go
+# Single-image build for Render: nginx + the Go API + both Python services.
+#
+# The previous version only shipped the Go binary and the React bundle, so in
+# production nothing was listening on 5001/5002 and every audit and chat
+# request failed with "service unavailable".
 
-# STAGE 2: Build frontend
-FROM node:18 AS frontend-build
-WORKDIR /app
-COPY frontend-ui/package*.json ./
-RUN npm install
-COPY frontend-ui/ .
+# ── Stage 1: Go API ────────────────────────────────────────────────────────
+FROM golang:1.25-alpine AS backend-build
+WORKDIR /src
+COPY core-backend/go.mod core-backend/go.sum ./
+RUN go mod download
+COPY core-backend/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+
+# ── Stage 2: React bundle ──────────────────────────────────────────────────
+FROM node:20-alpine AS frontend-build
+WORKDIR /src
+COPY frontend-ui/package.json frontend-ui/package-lock.json ./
+RUN npm ci
+COPY frontend-ui/ ./
 RUN npm run build
 
-# STAGE 3: Final image (Nginx + Go binary)
-FROM nginx:alpine
+# ── Stage 3: Python dependencies ───────────────────────────────────────────
+# Built separately so the compiler toolchain lxml needs does not end up in
+# the runtime image.
+FROM python:3.12-slim AS python-build
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libxml2-dev libxslt1-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /wheels
+COPY crawler-engine/requirements.txt crawler.txt
+COPY ai-assistant/requirements.txt ai.txt
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --upgrade pip \
+ && /opt/venv/bin/pip install -r crawler.txt -r ai.txt
 
-# envsubst (from the "gettext" package) is used below to inject Render's $PORT
-# into the nginx config at container startup.
-# NOTE: on Alpine the package is called "gettext", NOT "gettext-base" --
-# "gettext-base" is the Debian/Ubuntu package name and does not exist in apk.
-# (nginx:alpine technically already ships envsubst for its own template
-# mechanism, but we install it explicitly so this doesn't silently break if
-# the base image ever changes.)
-RUN apk add --no-cache gettext
+# ── Stage 4: runtime ───────────────────────────────────────────────────────
+FROM python:3.12-slim
 
-# A sane local-dev default so the container doesn't crash if PORT isn't set
-# (e.g. when testing with `docker run` without -e PORT=...). Render will
-# always override this with its own value at runtime.
-ENV PORT=80
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app \
+    GIN_MODE=release \
+    BACKEND_PORT=8080 \
+    CRAWLER_PORT=5001 \
+    AI_PORT=5002 \
+    PORT=8000
 
-COPY --from=backend-build /app/server /usr/local/bin/server
-COPY --from=frontend-build /app/dist /usr/share/nginx/html
+# libxml2/libxslt are the runtime halves of the lxml wheel; gettext provides
+# envsubst, used to render the nginx config once $PORT is known.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nginx gettext-base libxml2 libxslt1.1 curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -f /etc/nginx/sites-enabled/default
 
-# Ship the nginx config as a TEMPLATE (contains the literal placeholder
-# ${PORT}), not as a final config -- it gets rendered into a real config at
-# container start, once we actually know what port Render gave us.
-COPY nginx.conf.template /etc/nginx/conf.d/default.conf.template
+COPY --from=python-build /opt/venv /opt/venv
+COPY --from=backend-build /out/server /usr/local/bin/d-ai-server
+COPY --from=frontend-build /src/dist /usr/share/nginx/html
 
-EXPOSE 80
+WORKDIR /app
+COPY crawler-engine/src /app/crawler/src
+COPY ai-assistant/src /app/ai/src
+COPY ai-assistant/prompts /app/ai/prompts
 
-# 1. Start the Go backend on a FIXED internal port (8080) -- this is set via
-#    "PORT=8080" only for this one command, so it does NOT see/use Render's
-#    real $PORT. This is intentional: Go and Nginx must NOT share a port.
-# 2. Render the nginx template using envsubst, but restrict substitution to
-#    the single variable '${PORT}'. This is important: nginx itself uses
-#    $host, $remote_addr, $scheme, etc. in its config (same $ syntax!) --
-#    passing the explicit '${PORT}' list stops envsubst from touching those
-#    and blanking them out.
-# 3. Start Nginx in the foreground, now listening on Render's real $PORT --
-#    this is the port Render actually checks for "no open ports detected".
-CMD ["/bin/sh", "-c", "PORT=8080 /usr/local/bin/server & envsubst '${PORT}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
+# Shipped as a template with a literal ${PORT}; rendered at startup.
+COPY nginx.conf.template /etc/nginx/templates/d-ai.conf.template
+COPY system-tools/scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# nginx must be able to write its own temp files as a non-root user.
+RUN useradd --system --create-home --shell /usr/sbin/nologin d-ai \
+ && mkdir -p /var/cache/nginx /var/log/nginx /var/lib/nginx /run/nginx \
+ && chown -R d-ai:d-ai /var/cache/nginx /var/log/nginx /var/lib/nginx /run/nginx /etc/nginx/conf.d
+USER d-ai
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS "http://127.0.0.1:${PORT}/health" > /dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

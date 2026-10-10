@@ -1,24 +1,89 @@
+# Rendered at container start by docker-entrypoint.sh: ${PORT} and
+# ${BACKEND_PORT} are substituted, every other $variable belongs to nginx.
+
+upstream d_ai_api {
+    server 127.0.0.1:${BACKEND_PORT};
+    keepalive 16;
+}
+
 server {
     listen ${PORT};
+    server_name _;
 
-    # Проксируем API на Go-сервер внутри контейнера.
-    # ВАЖНО: это ВНУТРЕННИЙ фиксированный порт (8080), а не тот $PORT, который
-    # Render выдаёт снаружи. Go-сервер и Nginx не должны слушать один и тот же
-    # порт -- два процесса физически не могут забиндиться на один и тот же
-    # порт одновременно. Render проверяет только порт, который слушает Nginx
-    # (он указан в $PORT), поэтому именно Nginx должен быть на $PORT, а Go --
-    # на любом стабильном внутреннем порту, который знает только Nginx.
-    location /api/ {
-        proxy_pass http://127.0.0.1:8080;
+    # Container logs, so `docker logs` / the platform log view shows requests.
+    access_log /dev/stdout;
+
+    # Large enough for an audit report in a chat request, small enough that a
+    # single client cannot push megabytes at the API.
+    client_max_body_size 1m;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+    # TLS is terminated at the platform edge, so no HSTS here.
+    # NOTE: nginx does not merge add_header across contexts -- a location with
+    # its own add_header loses every one of these. That is why the cache rules
+    # below use `expires` instead of another add_header.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Streaming chat: buffering here would hold the whole SSE response until
+    # the model finished, which looks exactly like a hung request.
+    location = /api/chat {
+        proxy_pass http://d_ai_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+        chunked_transfer_encoding on;
     }
 
-    # Отдаем фронтенд
+    location /api/ {
+        proxy_pass http://d_ai_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 120s;
+    }
+
+    # The platform health check hits this; it reports every service's state.
+    location = /health {
+        proxy_pass http://d_ai_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Vite emits hashed filenames here, so they can be cached for a year.
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+    }
+
+    # index.html must not be cached: it points at the hashed asset names.
+    location = /index.html {
+        expires -1;
+    }
+
+    # Single-page app: unknown paths are client-side routes.
     location / {
-        root /usr/share/nginx/html;
         try_files $uri $uri/ /index.html;
     }
 }

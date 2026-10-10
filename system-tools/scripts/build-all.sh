@@ -1,10 +1,27 @@
 #!/usr/bin/env bash
-# build-all.sh — Build all Docker images.
-set -e
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-echo "🛡️  d-ai — building Docker images …"
-docker build -t d-ai/core-backend:latest    "$ROOT/core-backend"
-docker build -t d-ai/crawler-engine:latest  "$ROOT/crawler-engine"
-docker build -t d-ai/ai-assistant:latest    "$ROOT/ai-assistant"
-docker build -t d-ai/frontend-ui:latest     "$ROOT/frontend-ui"
-echo "All images built successfully."
+# Builds and tests everything the CI would.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+echo "── core-backend ──"
+(cd core-backend && gofmt -l . && go vet ./... && go test ./... && go build ./...)
+
+echo "── crawler-engine ──"
+(cd crawler-engine \
+  && python3 -m venv .venv 2>/dev/null || true \
+  && .venv/bin/pip install -q -r requirements-dev.txt \
+  && .venv/bin/python -m pytest -q)
+
+echo "── ai-assistant ──"
+(cd ai-assistant \
+  && python3 -m venv .venv 2>/dev/null || true \
+  && .venv/bin/pip install -q -r requirements-dev.txt \
+  && .venv/bin/python -m pytest -q)
+
+echo "── frontend-ui ──"
+(cd frontend-ui && npm ci && npm run build)
+
+echo ""
+echo "all green"

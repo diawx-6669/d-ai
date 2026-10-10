@@ -1,34 +1,65 @@
 #!/usr/bin/env bash
-# dev-start.sh — Start all services locally (requires Go, Python 3.12, Node 20)
-set -e
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-echo "🛡️  d-ai dev environment starting …"
+#
+# Starts the whole stack locally: both Python services, the Go API and Vite.
+# Requires Go 1.25+, Python 3.11+ and Node 20+. Ctrl-C stops everything.
+set -euo pipefail
 
-# Backend
-(cd "$ROOT/core-backend" && go run ./cmd/server &)
-echo "  ✓ core-backend on :8080"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
 
-# Crawler
-(cd "$ROOT/crawler-engine" && \
-  python -m venv .venv 2>/dev/null && \
-  source .venv/bin/activate && \
-  pip install -q -r requirements.txt && \
-  python -m src.app &)
-echo "  ✓ crawler-engine on :5001"
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 
-# AI assistant
-(cd "$ROOT/ai-assistant" && \
-  python -m venv .venv 2>/dev/null && \
-  source .venv/bin/activate && \
-  pip install -q -r requirements.txt && \
-  python -m src.app &)
-echo "  ✓ ai-assistant on :5002"
+export CRAWLER_SERVICE_BASE="${CRAWLER_SERVICE_BASE:-http://127.0.0.1:5001}"
+export AI_SERVICE_BASE="${AI_SERVICE_BASE:-http://127.0.0.1:5002}"
+# Audit your own machine during development. Never set this in production.
+export CRAWLER_ALLOW_PRIVATE="${CRAWLER_ALLOW_PRIVATE:-1}"
 
-# Frontend
-(cd "$ROOT/frontend-ui" && npm install -s && npm run dev &)
-echo "  ✓ frontend-ui on :3000"
+pids=()
+cleanup() {
+  echo ""
+  echo "stopping …"
+  for pid in "${pids[@]:-}"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  wait 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+venv() {
+  local dir="$1"
+  if [[ ! -d "$dir/.venv" ]]; then
+    echo "  creating venv in $dir"
+    python3 -m venv "$dir/.venv"
+  fi
+  "$dir/.venv/bin/pip" install -q -r "$dir/requirements.txt"
+}
+
+echo "d-ai dev environment starting …"
+
+venv crawler-engine
+(cd crawler-engine && .venv/bin/python -m src.app) &
+pids+=($!)
+echo "  crawler-engine  → http://127.0.0.1:5001"
+
+venv ai-assistant
+(cd ai-assistant && .venv/bin/python -m src.app) &
+pids+=($!)
+echo "  ai-assistant    → http://127.0.0.1:5002"
+
+(cd core-backend && PORT="${PORT:-8080}" GIN_MODE=debug go run ./cmd/server) &
+pids+=($!)
+echo "  core-backend    → http://127.0.0.1:8080"
+
+(cd frontend-ui && npm install --silent && npm run dev) &
+pids+=($!)
+echo "  frontend-ui     → http://127.0.0.1:3000"
 
 echo ""
-echo "  Open http://localhost:3000  (admin / d-ai-secret)"
-echo "  Press Ctrl-C to stop all services."
+echo "  Open http://localhost:3000 and register an account."
+echo "  Press Ctrl-C to stop."
 wait

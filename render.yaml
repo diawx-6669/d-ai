@@ -1,18 +1,44 @@
+# Render blueprint. The whole stack ships as one Docker image (see Dockerfile):
+# nginx serves the React bundle on $PORT and proxies /api to the Go backend,
+# which talks to the two Python services over localhost.
 services:
   - type: web
     name: d-ai
-    env: docker
+    runtime: docker
     repo: https://github.com/diawx-6669/d-ai.git
-    branch: render-deploy
+    # Must be a branch that actually exists -- the previous value
+    # ("render-deploy") did not, so Render had nothing to deploy.
+    branch: main
     plan: free
-    buildCommand: ""
-    startCommand: ""
+    dockerfilePath: ./Dockerfile
+    # /health reports the state of every service in the container and answers
+    # 200 as long as the API is up, so a degraded AI service does not cause a
+    # restart loop.
+    healthCheckPath: /health
     envVars:
-      - key: GIN_MODE
-        value: release
       - key: PORT
         value: "10000"
+      - key: GIN_MODE
+        value: release
+      # Without this the backend used to die at startup; it now falls back to
+      # an in-memory store, but then accounts and audits vanish on restart.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: d-ai-db
+          property: connectionString
+      # Generated once by Render and kept across deploys, so issued tokens
+      # survive a restart.
+      - key: JWT_SECRET
+        generateValue: true
+      # Set this in the Render dashboard. Audits work without it (findings are
+      # measured, advice falls back to rules); the AI chat does not.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
 
 databases:
   - name: d-ai-db
-    plan: starter
+    plan: free
+    databaseName: dai
+    user: dai

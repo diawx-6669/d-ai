@@ -1,25 +1,43 @@
-version: "3.9"
+# Local stack: each service in its own container, the way they run in
+# development. Production uses the single image built by the root Dockerfile.
 services:
   core-backend:
     build: ./core-backend
     ports: ["8080:8080"]
-    env_file: .env
-    depends_on: [postgres]
+    environment:
+      PORT: "8080"
+      GIN_MODE: release
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/dai?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
+      CRAWLER_SERVICE_BASE: http://crawler-engine:5001
+      AI_SERVICE_BASE: http://ai-assistant:5002
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   crawler-engine:
     build: ./crawler-engine
     ports: ["5001:5001"]
-    env_file: .env
+    environment:
+      CRAWLER_TIMEOUT: ${CRAWLER_TIMEOUT:-30}
+      # Set to 1 only if you want to audit sites running on your own machine.
+      CRAWLER_ALLOW_PRIVATE: ${CRAWLER_ALLOW_PRIVATE:-0}
+    restart: unless-stopped
 
   ai-assistant:
     build: ./ai-assistant
     ports: ["5002:5002"]
-    env_file: .env
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+    restart: unless-stopped
 
   frontend-ui:
     build: ./frontend-ui
     ports: ["3000:3000"]
-    env_file: .env
+    depends_on: [core-backend]
+    restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
@@ -28,6 +46,12 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
 
 volumes:
   pgdata:
