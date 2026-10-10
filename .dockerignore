@@ -1,0 +1,20 @@
+# Keeps the build context small and, more importantly, stops the committed
+# node_modules (which held macOS binaries) from overwriting what `npm ci`
+# installs inside the Linux image.
+**/node_modules
+**/.venv
+**/__pycache__
+**/dist
+**/.pytest_cache
+
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+.DS_Store
+**/.DS_Store
+
+*.md
+!README.md

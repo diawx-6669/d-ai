@@ -1,0 +1,27 @@
+# Secrets — never commit real values; copy .env.example instead.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Go
+/core-backend/server
+/core-backend/d-ai-server
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
