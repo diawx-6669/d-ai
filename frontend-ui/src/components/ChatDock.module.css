@@ -1,0 +1,160 @@
+.panel {
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.header {
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headerTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.messages {
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+}
+
+.rowUser {
+  composes: row;
+  justify-content: flex-end;
+}
+
+.rowAssistant {
+  composes: row;
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: 85%;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.bubbleUser {
+  composes: bubble;
+  background: var(--red);
+  border-radius: 12px 12px 3px 12px;
+  white-space: pre-wrap;
+}
+
+.bubbleAssistant {
+  composes: bubble;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px 12px 12px 3px;
+}
+
+/* react-markdown output */
+.bubbleAssistant :global(p) {
+  margin: 0 0 8px;
+}
+
+.bubbleAssistant :global(p:last-child) {
+  margin-bottom: 0;
+}
+
+.bubbleAssistant :global(pre) {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.bubbleAssistant :global(code) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.bubbleAssistant :global(:not(pre) > code) {
+  background: var(--bg-base);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.bubbleAssistant :global(ul),
+.bubbleAssistant :global(ol) {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+}
+
+.bubbleAssistant :global(a) {
+  color: var(--red);
+}
+
+.error {
+  composes: bubbleAssistant;
+  border-color: var(--border-focus);
+  color: var(--red);
+}
+
+.typing {
+  display: flex;
+  gap: 5px;
+  padding: 6px 4px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: pulse-dot 1.2s infinite;
+}
+
+.inputArea {
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  resize: none;
+  font-family: inherit;
+  line-height: 1.5;
+  max-height: 120px;
+}
+
+.send {
+  padding: 8px 13px;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

@@ -1,35 +1,25 @@
-const BASE = import.meta.env.VITE_API_BASE || "";
+import { clearSession, request, setSession } from "./client";
 
 export async function loginUser(username, password) {
-  const res = await fetch(`${BASE}/api/auth/login`, {
+  const data = await request("/api/auth/login", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    auth: false,
+    body: { username, password },
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Login failed");
-  }
-  const data = await res.json();
-  if (data.token) {
-    localStorage.setItem("dai_token", data.token);
-  }
+  setSession(data.token, data.username || username);
   return data;
 }
 
 export async function registerUser(username, password) {
-  const res = await fetch(`${BASE}/api/auth/register`, {
+  const data = await request("/api/auth/register", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    auth: false,
+    body: { username, password },
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || "Registration failed");
-  }
-  const data = await res.json();
-  if (data.token) {
-    localStorage.setItem("dai_token", data.token);
-  }
+  setSession(data.token, data.username || username);
   return data;
+}
+
+export function logout() {
+  clearSession();
 }

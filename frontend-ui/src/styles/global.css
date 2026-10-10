@@ -90,3 +90,32 @@ button { cursor: pointer; font-family: var(--font-sans); border: none; }
 .badge-critical { background: rgba(255,51,68,0.18); color: #ff3344; border: 1px solid rgba(255,51,68,0.35); }
 .badge-warning  { background: rgba(250,173,20,0.15); color: #faad14; border: 1px solid rgba(250,173,20,0.3); }
 .badge-info     { background: rgba(96,165,250,0.12); color: #60a5fa; border: 1px solid rgba(96,165,250,0.25); }
+
+/* Crash screen rendered by the top-level error boundary */
+.crash {
+  max-width: 640px;
+  margin: 12vh auto;
+  padding: 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.crash h2 { font-size: 20px; }
+.crash p { color: var(--text-secondary); font-size: 14px; }
+
+.crash pre {
+  width: 100%;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--red);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+button:disabled { cursor: not-allowed; }

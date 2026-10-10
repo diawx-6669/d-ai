@@ -72,3 +72,27 @@
   border: 1px solid var(--border-focus);
   border-radius: var(--radius-sm);
 }
+
+.altAction {
+  margin-top: 18px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.altAction a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-decoration-color: var(--red);
+  text-underline-offset: 3px;
+}
+
+.altAction a:hover {
+  color: var(--red);
+}
+
+.submit:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
